@@ -66,6 +66,8 @@ CANESM_MRSOS_ROOT: str = "/home/mhpereir/data-mhpereir/standard_grid_daily/CMIP6
 
 LWA_THRESH_ROOT: str = "/home/mhpereir/data-mhpereir/LWA_thresholds/outputs"
 
+HW_THRESH_ROOT: str = "/home/mhpereir/data-mhpereir/HW_thresholds/thresholds"
+
 OUTPUT_PATH: str = "/home/mhpereir/LWA_analysis/results"
 os.makedirs(OUTPUT_PATH, exist_ok=True)
 

@@ -203,3 +203,53 @@ def open_era5_lwa_thresh(q: int, region: str, zg_coord: int) -> xr.Dataset:
 
     # 3) Give the MEMBER axis meaningful labels
     return ds_ERA5
+
+
+
+def open_canesm_hw_thresh(
+    var: str,
+    q: int,
+    region_key: str,
+    ensemble_list: List[str]
+) -> xr.DataArray:
+    """Open DOY thresholds for CanESM: dims (member, dayofyear)."""
+    path_to_data = config.HW_THRESH_ROOT
+    files_by_member = []
+    for m in ensemble_list:
+        fp = f"{path_to_data}/CanESM5_HWthresh_block_1970_2014_{var}_q{q}_{region_key}_{m}.nc"
+        files = sorted(glob.glob(fp))
+        if not files:
+            raise FileNotFoundError(f"No CanESM threshold for {m}: {fp}")
+        files_by_member.append(files)
+
+    ds = xr.open_mfdataset(
+        files_by_member,
+        combine="nested",
+        concat_dim=["member", "time"],
+        parallel=True,
+        engine="h5netcdf",
+        chunks={"time": 365},
+    )
+    ds = ds.assign_coords(member=("member", ensemble_list))
+
+    vname = f"{var}_thresh_p{q}_win31"
+    da = ds[vname]
+    if "dayofyear" not in da.dims:
+        if "time" in da.dims:
+            day = xr.DataArray(da["time"].dt.dayofyear.values, dims=("time",))
+            da = da.groupby(day).mean("time").rename({"group": "dayofyear"})
+        else:
+            raise ValueError("Cannot infer dayofyear dimension from threshold file.")
+    return da
+
+
+def open_era5_hw_thresh(var: str, q: int, region_key: str) -> xr.DataArray:
+    path_to_data = config.HW_THRESH_ROOT
+    fp = f"{path_to_data}/ERA5_HWthresh_block_1970_2014_{var}_q{q}_{region_key}.nc"
+    ds = xr.open_dataset(fp, engine="h5netcdf")  # type: ignore
+    vname = f"{var}_thresh_p{q}_win31"
+    da = ds[vname]
+    if "dayofyear" not in da.dims and "time" in da.dims:
+        day = xr.DataArray(da["time"].dt.dayofyear.values, dims=("time",))
+        da = da.groupby(day).mean("time").rename({"group": "dayofyear"})
+    return da
