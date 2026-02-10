@@ -45,10 +45,10 @@ model_variations = {
     "lwa_only": _lwa_only,
 }
 
-OUTPUT_POSTERIORS_PATH = os.path.join(config.OUTPUT_PATH, "pymc_fits")
+OUTPUT_POSTERIORS_PATH = os.path.join(config.OUTPUT_PATH, "pymc_fits_bothLWA")
 os.makedirs(OUTPUT_POSTERIORS_PATH, exist_ok=True)
 
-OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_lwa_dt_sm_correlation")
+OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_both_lwa_dt_sm_correlation")
 os.makedirs(OUTPUT_PLOTS_PATH, exist_ok=True)
 
 
@@ -67,13 +67,7 @@ def arg_parser():
     parser = argparse.ArgumentParser(
         description="LWA vs deltaT correlation analysis and plotting."
     )
-    parser.add_argument(
-        "--lwa_var",
-        type=str,
-        choices=config.LWA_VARS,
-        default="LWA",
-        help="LWA variable to analyze.",
-    )
+    
     parser.add_argument(
         "--region",
         type=str,
@@ -103,33 +97,37 @@ def arg_parser():
 
 
 def _prep_design_matrix(
-    lwa: xr.DataArray,
+    lwa_a: xr.DataArray,
+    lwa_c: xr.DataArray,
     sm: xr.DataArray,
     dt: xr.DataArray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Return centered+standardized (X1, X2, y) as numpy arrays, aligned on time.
     Assumes inputs are 1D with coord 'time' and no 'member' dimension.
     """
     # Align on time
-    lwa, sm, dt = xr.align(lwa, sm, dt, join="inner")
+    lwa_a, lwa_c, sm, dt = xr.align(lwa_a, lwa_c, sm, dt, join="inner")
 
     # Drop NaNs
-    good = np.isfinite(lwa.values) & np.isfinite(sm.values) & np.isfinite(dt.values)
-    lwa = lwa.isel(time=good)
+    good = np.isfinite(lwa_a.values) & np.isfinite(lwa_c.values) & np.isfinite(sm.values) & np.isfinite(dt.values)
+    lwa_a = lwa_a.isel(time=good)
+    lwa_c = lwa_c.isel(time=good)
     sm  = sm.isel(time=good)
     dt  = dt.isel(time=good)
 
     # Center + standardize (within the already-cropped season)
-    x1 = lwa.values.astype("float64")
-    x2 = sm.values.astype("float64")
+    x1 = lwa_a.values.astype("float64")
+    x2 = lwa_c.values.astype("float64")
+    x3 = sm.values.astype("float64")
     y  = dt.values.astype("float64")
 
     x1 = (x1 - x1.mean()) / x1.std()
     x2 = (x2 - x2.mean()) / x2.std()
+    x3 = (x3 - x3.mean()) / x3.std()
     y  = (y  - y.mean())  / y.std()
 
-    return x1, x2, y
+    return x1, x2, x3, y
 
 
 # def _year_segments(time: xr.DataArray) -> list[np.ndarray]:
@@ -147,7 +145,14 @@ def _prep_design_matrix(
 #     return segs
 
 
+def load_lwa_data(ds_lwa_var, region):
+    ds_lwa_reg = preprocess.compute_region_mean(ds_lwa_var, region).chunk({"time": 365}).compute()
+    
+    ds_sqrt_lwa_reg = xr.apply_ufunc(np.sqrt, ds_lwa_reg)
+   
+    ds_sqrt_lwa_reg = ds_sqrt_lwa_reg.assign_coords(time=ds_sqrt_lwa_reg.time.dt.floor("D"))
 
+    return ds_sqrt_lwa_reg
 
 # ------------------------------ Stats Model ----------------------------------
 
@@ -279,8 +284,9 @@ def _prep_design_matrix(
 
 def fit_pymc_ar1_model(
     time: xr.DataArray,
-    x1: np.ndarray,
-    x2: np.ndarray,
+    x1: np.ndarray, #lwa_a
+    x2: np.ndarray, #lwa_c
+    x3: np.ndarray, #sm
     y: np.ndarray,
     include_lwa: bool = True,
     include_sm: bool = True,
@@ -297,6 +303,7 @@ def fit_pymc_ar1_model(
     with pm.Model() as model:
         x1d = pm.Data("x1", x1)
         x2d = pm.Data("x2", x2)
+        x3d = pm.Data("x3", x3)
         yd  = pm.Data("y",  y)
         syd = pm.Data("same_year", same_year)
 
@@ -310,16 +317,13 @@ def fit_pymc_ar1_model(
         nu = pm.Exponential("nu_minus_2", 1/10) + 2.0
         sigma = pm.HalfNormal("sigma", 1.0)
 
-        x12 = x1d * x2d # type: ignore
-
         # build deterministic mean based on included terms
         mu = b0
         if include_lwa:
-            mu += b1 * x1d
+            mu += b1 * x1d + b2 * x2d
         if include_sm:
-            mu += b2 * x2d
-        if include_interaction:
-            mu += b3 * x12
+            mu += b3 * x3d
+        
 
         # ------------------------------------------------------------------
         # Build lag-1 versions of the observed data and the deterministic mean
@@ -430,9 +434,9 @@ def plot_lwa_sm_correlation(masked_lwa_era: xr.DataArray,
 # ------------------------------ Main Analysis --------------------------------
 
 
-def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
+def run_analysis(REGION: str, SEASON: str, ZG_COORD: int):
     
-    #load in data
+    #TEMP VAR
 
     ds_tas_canesm = data_io.open_canesm_temperature(TEMP_VAR, ENSEMBLE_LIST)
     ds_tas_canesm = ds_tas_canesm.chunk({"time": 365})
@@ -451,6 +455,8 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
     ds_tas_canesm_anom = ds_tas_canesm_anom.assign_coords(time=ds_tas_canesm_anom.time.dt.floor("D"))
     ds_tas_era5_anom = ds_tas_era5_anom.assign_coords(time=ds_tas_era5_anom.time.dt.floor("D")) #ensure time coords match
     
+    ##MRSOS
+
     ds_mrsos_canesm = data_io.open_canesm_mrsos(var='mrsos', ensemble_list=ENSEMBLE_LIST)
     ds_mrsos_canesm = preprocess.compute_region_mean(ds_mrsos_canesm, REGION).compute()
 
@@ -463,31 +469,35 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
     ds_mrsos_era5_clim = ds_mrsos_era5.groupby("time.dayofyear").mean("time")
     ds_mrsos_era5_anom = ds_mrsos_era5.groupby("time.dayofyear") - ds_mrsos_era5_clim
 
+    ds_mrsos_canesm_anom = preprocess.floor_daily_time(ds_mrsos_canesm_anom)
+    ds_mrsos_era5_anom   = preprocess.floor_daily_time(ds_mrsos_era5_anom)
+
     ## loading LWA data
     # 1) Open CanESM and ERA5 for all VARiables
     ds_canesm_lwas: Dict[str, xr.DataArray] = data_io.open_canesm_lwa(ENSEMBLE_LIST, ZG_COORD)
     ds_era5_lwas: Dict[str, xr.DataArray]   = data_io.open_era5_lwa(ZG_COORD)
 
-    ds_canesm_lwa = ds_canesm_lwas[LWA_var]#.sel(MEMBER=MEMBER)
-    ds_era5_lwa   = ds_era5_lwas[LWA_var]
+    ds_canesm_lwa_a = ds_canesm_lwas["LWA_a"]#.sel(MEMBER=MEMBER)
+    ds_canesm_lwa_c = ds_canesm_lwas["LWA_c"]#.sel(MEMBER=MEMBER)
 
-    ds_canesm_lwa_reg = preprocess.compute_region_mean(ds_canesm_lwa, REGION).chunk({"time": 365}).compute()
-    ds_era5_lwa_reg   = preprocess.compute_region_mean(ds_era5_lwa, REGION).chunk({"time": 365}).compute()
+    ds_era5_lwa_a   = ds_era5_lwas["LWA_a"]
+    ds_era5_lwa_c   = ds_era5_lwas["LWA_c"]
 
-    ds_canesm_lwa_reg = xr.apply_ufunc(np.sqrt, ds_canesm_lwa_reg)
-    ds_era5_lwa_reg   = xr.apply_ufunc(np.sqrt, ds_era5_lwa_reg)
+    ds_canesm_lwa_a_reg = load_lwa_data(ds_canesm_lwa_a, REGION)
+    ds_canesm_lwa_c_reg = load_lwa_data(ds_canesm_lwa_c, REGION)
 
-    ds_canesm_lwa_reg = ds_canesm_lwa_reg.assign_coords(time=ds_canesm_lwa_reg.time.dt.floor("D"))
-    ds_era5_lwa_reg = ds_era5_lwa_reg.assign_coords(time=ds_era5_lwa_reg.time.dt.floor("D"))
+    ds_era5_lwa_a_reg   = load_lwa_data(ds_era5_lwa_a, REGION)
+    ds_era5_lwa_c_reg   = load_lwa_data(ds_era5_lwa_c, REGION)
+    
 
-    ds_mrsos_canesm_anom = ds_mrsos_canesm_anom.assign_coords(time=ds_mrsos_canesm_anom.time.dt.floor("D"))
-    ds_mrsos_era5_anom   = ds_mrsos_era5_anom.assign_coords(time=ds_mrsos_era5_anom.time.dt.floor("D"))
+    season_mask_era = ds_era5_lwa_a_reg.time.dt.season == SEASON
+    season_mask_can = ds_canesm_lwa_a_reg.time.dt.season == SEASON
 
-    season_mask_era = ds_era5_lwa_reg.time.dt.season == SEASON
-    season_mask_can = ds_canesm_lwa_reg.time.dt.season == SEASON
+    masked_lwa_a_era = ds_era5_lwa_a_reg.where(season_mask_era,drop=True)
+    masked_lwa_a_can = ds_canesm_lwa_a_reg.where(season_mask_can,drop=True)
 
-    masked_lwa_era = ds_era5_lwa_reg.where(season_mask_era,drop=True)
-    masked_lwa_can = ds_canesm_lwa_reg.where(season_mask_can,drop=True)
+    masked_lwa_c_era = ds_era5_lwa_c_reg.where(season_mask_era,drop=True)
+    masked_lwa_c_can = ds_canesm_lwa_c_reg.where(season_mask_can,drop=True)
 
     masked_tas_era = ds_tas_era5_anom.where(season_mask_era,drop=True)
     masked_tas_can = ds_tas_canesm_anom.where(season_mask_can,drop=True)
@@ -497,18 +507,20 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
 
     
     plot_lwa_sm_correlation(
-        masked_lwa_era=masked_lwa_era,
+        masked_lwa_era=masked_lwa_a_era,
         masked_mrsos_era=masked_mrsos_era,
-        masked_lwa_can=masked_lwa_can,
+        masked_lwa_can=masked_lwa_a_can,
         masked_mrsos_can=masked_mrsos_can,
-        LWA_var=LWA_var,
+        LWA_var="LWA_a",
         REGION=REGION,
         SEASON=SEASON
     )
 
 
-    x_lo = np.min([masked_lwa_era.min().item(), masked_lwa_can.min().item()])
-    x_hi = np.max([masked_lwa_era.max().item(), masked_lwa_can.max().item()])
+    x_a_lo = np.min([masked_lwa_a_era.min().item(), masked_lwa_a_can.min().item()])
+    x_a_hi = np.max([masked_lwa_a_era.max().item(), masked_lwa_a_can.max().item()])
+    x_c_lo = np.min([masked_lwa_c_era.min().item(), masked_lwa_c_can.min().item()])
+    x_c_hi = np.max([masked_lwa_c_era.max().item(), masked_lwa_c_can.max().item()])
     y_lo = np.min([masked_tas_era.min().item(), masked_tas_can.min().item()])
     y_hi = np.max([masked_tas_era.max().item(), masked_tas_can.max().item()])
     z_lo = np.min([masked_mrsos_era.min().item(), masked_mrsos_can.min().item()])
@@ -518,8 +530,9 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
 
     # --- PyMC fit for ERA5: deltaT ~ LWA + SM + LWA*SM with AR(1) residual ---
     # prep standardized design arrays (align, drop NaNs, standardize)
-    x1, x2, y = _prep_design_matrix( 
-        lwa=masked_lwa_era,
+    x1, x2, x3, y = _prep_design_matrix( 
+        lwa_a=masked_lwa_a_era,
+        lwa_c=masked_lwa_c_era,
         sm=masked_mrsos_era,
         dt=masked_tas_era
     )
@@ -530,7 +543,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
         print(f"\n=== Fitting ERA5 model: {model_name} ===")
         idata_model_era = fit_pymc_ar1_model(
             time=masked_tas_era.time,
-                x1=x1, x2=x2, y=y,
+                x1=x1, x2=x2, x3=x3, y=y,
                 include_lwa=model_['include_lwa'],
                 include_sm=model_['include_sm'],
                 include_interaction=model_['include_interaction'],
@@ -539,7 +552,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
         )
 
         print(az.summary(idata_model_era, var_names=["b0","b1","b2","b3","rho","sigma","nu_minus_2"]))
-        az.to_netcdf(idata_model_era, f"{OUTPUT_POSTERIORS_PATH}/pymc_ar1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_ERA5.nc")
+        az.to_netcdf(idata_model_era, f"{OUTPUT_POSTERIORS_PATH}/pymc_ar1_{model_name}_bothLWA_tas_sm_{REGION}_{SEASON}_ERA5.nc")
 
 
     # --- PyMC loop-per-member for CanESM5 ---
@@ -567,12 +580,13 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
         print(f"\n=== Fitting member {m} ===")
 
         # Select 1D time series for this member
-        lwa_m = masked_lwa_can.sel(member=m)
+        lwa_a_m = masked_lwa_a_can.sel(member=m)
+        lwa_c_m = masked_lwa_c_can.sel(member=m)
         sm_m  = masked_mrsos_can.sel(member=m)
         dt_m  = masked_tas_can.sel(member=m)
 
         # Prep standardized design arrays (align, drop NaNs, standardize)
-        x1, x2, y = _prep_design_matrix(lwa=lwa_m, sm=sm_m, dt=dt_m)
+        x1, x2, x3, y = _prep_design_matrix(lwa_a=lwa_a_m, lwa_c=lwa_c_m, sm=sm_m, dt=dt_m)
 
         # Loop for different model variations
         for model_name in model_variations:
@@ -580,7 +594,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
             print(f"\n--- Fitting member {m} model: {model_name} ---")
             idata_model_m = fit_pymc_ar1_model(
                 time=dt_m.time,   # use the member’s time coord (same as others after align)
-                x1=x1, x2=x2, y=y,
+                x1=x1, x2=x2, x3=x3, y=y,
                 include_lwa=model_['include_lwa'],
                 include_sm=model_['include_sm'],
                 include_interaction=model_['include_interaction'],
@@ -594,7 +608,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
                 idata_model_m,
                 os.path.join(
                     OUTPUT_POSTERIORS_PATH,
-                    f"pymc_ar1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_CanESM5_{str(m)}.nc"
+                    f"pymc_ar1_{model_name}_bothLWA_tas_sm_{REGION}_{SEASON}_CanESM5_{str(m)}.nc"
                 )
             )
 
@@ -636,7 +650,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
 
     # summary_outfile = os.path.join(
     #     OUTPUT_POSTERIORS_PATH,
-    #     f"pymc_ar1_full_model_summaries_{LWA_var}_tas_sm_{REGION}_{SEASON}_CanESM5.csv"
+    #     f"pymc_ar1_full_model_summaries_bothLWA_tas_sm_{REGION}_{SEASON}_CanESM5.csv"
     # )
     # summary_df.to_csv(summary_outfile)
 
@@ -648,8 +662,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
 if __name__ == "__main__":
     args = arg_parser()
     REGION   = args.region
-    LWA_var  = args.lwa_var
     SEASON   = args.season
     ZG_LEVEL = args.zg
 
-    run_analysis(REGION, LWA_var, SEASON, ZG_LEVEL)
+    run_analysis(REGION, SEASON, ZG_LEVEL)

@@ -439,9 +439,8 @@ def plot_joint_kde_panels(
     #         zorder=30
     #     )
 
-    # ax_left.set_xlabel(f"sqrt[{x_label} (hPa m)]")
-    ax_left.set_xlabel(rf'$\sqrt{{{x_label}\ \mathrm{{(hPa\,m)}}}}$')
-    ax_left.set_ylabel(y_label + " (K)")
+    ax_left.set_xlabel(x_label)
+    ax_left.set_ylabel(y_label)
     ax_left.set_xlim(x_limits)
     ax_left.set_ylim(y_limits)
     ax_left.legend(loc="lower right", frameon=True, fontsize=9)
@@ -509,8 +508,7 @@ def plot_joint_kde_panels(
     #         zorder=30
     #     )
 
-    # ax_left.set_xlabel(f"sqrt[{x_label} (hPa m)]")
-    ax_right.set_xlabel(rf'$\sqrt{{{x_label}\ \mathrm{{(hPa\,m)}}}}$')
+    ax_right.set_xlabel(x_label)
     # ax_right.set_ylabel(y_label + " (K)")
     ax_right.set_xlim(x_limits)
     ax_right.set_ylim(y_limits)
@@ -526,9 +524,9 @@ def plot_joint_kde_panels(
     if title:
         fig.suptitle(title, y=0.98, fontsize=14, fontweight="bold")
 
-    fig_name = f"{output_path}/SM_{lwa_var}_KDE_{region}_{season}.png"
+    fig_name = f"{output_path}"
     fig.savefig(fig_name, dpi=300, bbox_inches='tight')
-
+    plt.close()
     return None
 
 
@@ -569,18 +567,40 @@ def main(region: str, lwa_var: str, zg_coord: int) -> None:
         x_in_canesm=ds_canesm_lwa,
         y_in_canesm=canesm_mrsos_anom,
         title=f"SM vs LWA relation ({region}, {lwa_var} at {zg_coord} hPa)",
-        x_label=f"{lwa_var} [m hPa]",
+        x_label = rf"$\sqrt{{{lwa_var}}}\;[\mathrm{{m\,hPa}}]$",
         y_label=r"$\Delta$SM [kg/m$^2$]",
         point_alpha=0.3,
         max_scatter=5000,
         gridsize=200,
         cmap="afmhot_r",
-        output_path=OUTPUT_PLOTS_PATH,
+        output_path=output_path,
         lwa_var=lwa_var,
         season="JJA",
         region=region,
     )
+    print(f"Saved: {output_path}")
 
+
+    fig_name = f"SM_dT_relation_{region}_{lwa_var}_{zg_coord}.png"
+    output_path = os.path.join(OUTPUT_PLOTS_PATH, fig_name)
+
+    plot_joint_kde_panels(
+        x_in_era=ds_era5_temp_anom,
+        y_in_era=era5_mrsos_anom,
+        x_in_canesm=ds_canesm_temp_anom,
+        y_in_canesm=canesm_mrsos_anom,
+        title=rf"$\Delta T$ vs $\Delta$SM relation ({region}, {lwa_var} at {zg_coord} hPa)",
+        x_label=r"$\Delta$T [K]",
+        y_label=r"$\Delta$SM [kg/m$^2$]",
+        point_alpha=0.3,
+        max_scatter=5000,
+        gridsize=200,
+        cmap="afmhot_r",
+        output_path=output_path,
+        lwa_var=lwa_var,
+        season="JJA",
+        region=region,
+    )
     print(f"Saved: {output_path}")
 
     # add anomaly plot

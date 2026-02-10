@@ -8,7 +8,7 @@ _lwa_only = {'include_lwa': True, 'include_sm': False, 'include_interaction': Fa
 
 model_variations = {
     "full":     _full,
-    "no_int":   _no_int,
+    # "no_int":   _no_int,
     "sm_only":  _sm_only,
     "lwa_only": _lwa_only,
 }

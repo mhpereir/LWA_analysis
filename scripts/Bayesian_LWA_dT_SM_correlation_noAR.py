@@ -45,10 +45,10 @@ model_variations = {
     "lwa_only": _lwa_only,
 }
 
-OUTPUT_POSTERIORS_PATH = os.path.join(config.OUTPUT_PATH, "pymc_fits")
+OUTPUT_POSTERIORS_PATH = os.path.join(config.OUTPUT_PATH, "pymc_fits_noAR")
 os.makedirs(OUTPUT_POSTERIORS_PATH, exist_ok=True)
 
-OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_lwa_dt_sm_correlation")
+OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_lwa_dt_sm_correlation_noAR")
 os.makedirs(OUTPUT_PLOTS_PATH, exist_ok=True)
 
 
@@ -306,7 +306,7 @@ def fit_pymc_ar1_model(
         b2 = pm.Normal("b2", 0.0, 1.0)
         b3 = pm.Normal("b3", 0.0, 1.0)
 
-        rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
+        #rho = pm.Uniform("rho", lower=-0.99, upper=0.99)
         nu = pm.Exponential("nu_minus_2", 1/10) + 2.0
         sigma = pm.HalfNormal("sigma", 1.0)
 
@@ -329,10 +329,10 @@ def fit_pymc_ar1_model(
         #
         # These are used to introduce AR(1) structure on the *residuals*,
         # not on the raw data or on the deterministic mean itself.
-        y_prev  = pt.concatenate([yd[:1], yd[:-1]])  # type: ignore
-        mu_prev = pt.concatenate([mu[:1], mu[:-1]])  # type: ignore
+        # y_prev  = pt.concatenate([yd[:1], yd[:-1]])  # type: ignore
+        # mu_prev = pt.concatenate([mu[:1], mu[:-1]])  # type: ignore
 
-
+        # REMOVED 
         # ------------------------------------------------------------------
         # Conditional mean of y_t given y_{t-1}
         # ------------------------------------------------------------------
@@ -347,7 +347,7 @@ def fit_pymc_ar1_model(
         # Importantly:
         #   - mu_t contains NO time dependence
         #   - all temporal correlation lives in the residual term
-        cond_mu = mu + rho * syd * (y_prev - mu_prev)  # type: ignore
+        # cond_mu = mu + rho * syd * (y_prev - mu_prev)  # type: ignore
 
 
         # ------------------------------------------------------------------
@@ -367,7 +367,7 @@ def fit_pymc_ar1_model(
         pm.StudentT(
             "y_like",
             nu=nu,
-            mu=cond_mu,
+            mu=mu,
             sigma=sigma,
             observed=yd
         )
@@ -396,7 +396,39 @@ def fit_pymc_ar1_model(
     return idata
 
 
+def compute_mu_hat(
+    x1: np.ndarray, # LWA standardised
+    x2: np.ndarray, # SM  standardised
+    idata: az.InferenceData, #model posteriors
+    include_lwa: bool = True,
+    include_sm: bool = True,
+    include_interaction: bool = True,
+    stat: str = "median",  # or "mean"
+) -> np.ndarray:
+    post = idata.posterior # type: ignore
+
+    def _pt(var: str) -> float:
+        arr = post[var].values.reshape(-1)
+        return float(np.median(arr) if stat == "median" else np.mean(arr))
+
+    b0 = _pt("b0")
+    b1 = _pt("b1")
+    b2 = _pt("b2")
+    b3 = _pt("b3")
+
+    mu = np.full_like(x1, b0, dtype="float64")
+    if include_lwa:
+        mu += b1 * x1
+    if include_sm:
+        mu += b2 * x2
+    if include_interaction:
+        mu += b3 * (x1 * x2)
+    return mu
+
+
 # ------------------------------ Plotting functions ----------------------------------
+
+
 
 def plot_lwa_sm_correlation(masked_lwa_era: xr.DataArray,
                             masked_mrsos_era: xr.DataArray, 
@@ -425,6 +457,42 @@ def plot_lwa_sm_correlation(masked_lwa_era: xr.DataArray,
 
     fig_name = f"{OUTPUT_PLOTS_PATH}/{LWA_var}_vs_SoilMoisture_{REGION}_{SEASON}.png"
     fig.savefig(fig_name, dpi=300, bbox_inches='tight')
+
+
+
+def plot_residual_lag1(
+    time: xr.DataArray,
+    eps: np.ndarray,
+    out_png: str,
+    drop_year_boundaries: bool = True,
+) -> None:
+    years = time.dt.year.values.astype(np.int32)
+    same_year = np.concatenate([[0], (years[1:] == years[:-1]).astype(np.int8)])
+
+    # pairs: (t-1, t)
+    e0 = eps[:-1]
+    e1 = eps[1:]
+
+    if drop_year_boundaries:
+        ok = same_year[1:] == 1  # t has same year as t-1
+        e0 = e0[ok]
+        e1 = e1[ok]
+
+    fig, ax = plt.subplots(figsize=(5.5, 5.5))
+    ax.scatter(e0, e1, s=8, alpha=0.25)
+    ax.axhline(0, linewidth=1)
+    ax.axvline(0, linewidth=1)
+    ax.set_xlabel(r"$\epsilon_{t-1}$")
+    ax.set_ylabel(r"$\epsilon_{t}$")
+    ax.set_title("Residual lag-1 scatter")
+
+    # quick visual reference line y=x
+    lo = np.nanmin([e0.min(), e1.min()])
+    hi = np.nanmax([e0.max(), e1.max()])
+    ax.plot([lo, hi], [lo, hi], linewidth=1)
+
+    fig.savefig(out_png, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 # ------------------------------ Main Analysis --------------------------------
@@ -538,7 +606,23 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
             target_accept=0.9
         )
 
-        print(az.summary(idata_model_era, var_names=["b0","b1","b2","b3","rho","sigma","nu_minus_2"]))
+        if model_name == 'full': #only produce residual lag plots for full model
+            mu_hat = compute_mu_hat(
+                x1=x1, x2=x2, idata=idata_model_era,
+                include_lwa=model_["include_lwa"],
+                include_sm=model_["include_sm"],
+                include_interaction=model_["include_interaction"],
+                stat="median",
+            )
+            eps = y - mu_hat
+
+            out_png = os.path.join(
+                OUTPUT_PLOTS_PATH,
+                f"resid_lag1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_ERA5.png"
+            )
+            plot_residual_lag1(masked_tas_era.time, eps, out_png)
+
+        print(az.summary(idata_model_era, var_names=["b0","b1","b2","b3","sigma","nu_minus_2"]))
         az.to_netcdf(idata_model_era, f"{OUTPUT_POSTERIORS_PATH}/pymc_ar1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_ERA5.nc")
 
 
@@ -589,7 +673,23 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
                 chains=4
             )
 
-            print(az.summary(idata_model_m, var_names=["b0","b1","b2","b3","rho","sigma","nu_minus_2"]))
+            if model_name == 'full': #only produce residual lag plots for full model
+                mu_hat = compute_mu_hat(
+                    x1=x1, x2=x2, idata=idata_model_m,
+                    include_lwa=model_["include_lwa"],
+                    include_sm=model_["include_sm"],
+                    include_interaction=model_["include_interaction"],
+                    stat="median",
+                )
+                eps = y - mu_hat
+
+                out_png = os.path.join(
+                    OUTPUT_PLOTS_PATH,
+                    f"resid_lag1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_CanESM5_{str(m)}.png"
+                )
+                plot_residual_lag1(masked_tas_era.time, eps, out_png)
+
+            print(az.summary(idata_model_m, var_names=["b0","b1","b2","b3","sigma","nu_minus_2"]))
             az.to_netcdf(
                 idata_model_m,
                 os.path.join(
@@ -600,7 +700,7 @@ def run_analysis(REGION: str, LWA_var: str, SEASON: str, ZG_COORD: int):
 
             # Collect a compact summary row
             # if model_name == 'full':
-            #     s = az.summary(idata_model_m, var_names=["b0","b1","b2","b3","rho","sigma","nu_minus_2"])
+            #     s = az.summary(idata_model_m, var_names=["b0","b1","b2","b3","sigma","nu_minus_2"])
             #     s["member"] = str(m)
             #     summaries.append(s.reset_index().rename(columns={"index": "param"})) #type: ignore
             # else:

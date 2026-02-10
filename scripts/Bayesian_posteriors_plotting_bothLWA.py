@@ -32,11 +32,11 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib import ticker as mticker
 
 
-OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_lwa_dt_sm_correlation")
+OUTPUT_PLOTS_PATH = os.path.join(config.OUTPUT_PATH, "plots/bayesian_bothLWA_dt_sm_correlation_noAR")
 os.makedirs(OUTPUT_PLOTS_PATH, exist_ok=True)
 
-OUTPUT_POSTERIORS = os.path.join(config.OUTPUT_PATH, "pymc_fits")
-# OUTPUT_POSTERIORS = os.path.join(config.OUTPUT_PATH, "pymc_fits_noAR")
+# OUTPUT_POSTERIORS = os.path.join(config.OUTPUT_PATH, "pymc_fits")
+OUTPUT_POSTERIORS = os.path.join(config.OUTPUT_PATH, "pymc_fits_noAR_bothLWA")
 
 
 ENSEMBLE_LIST   = config.ENSEMBLE_LIST
@@ -44,8 +44,8 @@ MODEL_VARIATIONS = config_pymc.model_variations
 
 
 # Parameters you estimated (match what you saved)
-param_names = ["b0", "b1", "b2", "b3", "rho", "sigma", "nu_minus_2"]
-# param_names = ["b0", "b1", "b2", "b3", "sigma", "nu_minus_2"]
+# param_names = ["b0", "b1", "b2", "b3", "rho", "sigma", "nu_minus_2"]
+param_names = ["b0", "b1", "b2", "b3", "sigma", "nu_minus_2"]
 
 
 
@@ -157,10 +157,9 @@ def bayes_r2_ar1_studentt(idata: az.InferenceData,
     cd = idata.constant_data #type: ignore # created because you used pm.Data in the model
     x1 = cd["x1"].values.astype("float64")          # (T,)
     x2 = cd["x2"].values.astype("float64")
+    x3 = cd["x3"].values.astype("float64")
     y  = cd["y"].values.astype("float64")
     same_year = cd["same_year"].values.astype("float64")  # (T,)
-
-    x12 = x1 * x2  # (T,)
 
     S = b0.shape[0] # number of posterior samples
     T = x1.shape[0] # number of time points
@@ -168,11 +167,9 @@ def bayes_r2_ar1_studentt(idata: az.InferenceData,
     
     mu += b0[:, None]
     if include_lwa:
-        mu += b1[:, None] * x1[None, :]
+        mu += b1[:, None] * x1[None, :] + b2[:, None] * x2[None, :]
     if include_sm:
-        mu += b2[:, None] * x2[None, :]
-    if include_interaction:
-        mu += b3[:, None] * x12[None, :]
+        mu += b3[:, None] * x3[None, :]
 
     # # build cond_mu consistent with your likelihood
     # y_prev  = np.concatenate([y[:1], y[:-1]])
@@ -203,7 +200,7 @@ def rmse_per_draw(y:    np.ndarray,   # time series data
     err2 = (yhat - y[None, :])**2
     return np.sqrt(np.mean(err2, axis=1))  # (S,)
 
-def build_mu(b0,b1,b2,b3,x1,x2, include_lwa, include_sm, include_interaction):
+def build_mu(b0,b1,b2,b3,x1,x2, include_lwa, include_sm):
     S = b0.shape[0]
     T = x1.shape[0]
     mu = np.zeros((S, T), dtype=np.float64)
@@ -212,8 +209,6 @@ def build_mu(b0,b1,b2,b3,x1,x2, include_lwa, include_sm, include_interaction):
         mu += b1[:, None] * x1[None, :]
     if include_sm:
         mu += b2[:, None] * x2[None, :]
-    if include_interaction:
-        mu += b3[:, None] * (x1 * x2)[None, :]
     return mu
 
 # ----------------------------- Plotting -----------------------------
@@ -307,6 +302,10 @@ def run_analysis(LWA_var: str, REGION: str, SEASON: str):
             OUTPUT_POSTERIORS, f"pymc_ar1_{model_name}_{LWA_var}_tas_sm_{REGION}_{SEASON}_CanESM5_*.nc"
         )))
         N_members = len(can_files)
+
+        print(can_files)
+        print()
+
         assert N_members == len(ENSEMBLE_LIST), f"Expected {len(ENSEMBLE_LIST)} CanESM members, found {N_members}"
         # Verify all ensemble members are present
         found_members = {os.path.basename(f).split('_')[-1].split('.')[0] for f in can_files}
@@ -404,7 +403,7 @@ def run_analysis(LWA_var: str, REGION: str, SEASON: str):
             r2_partial_can[model_name].append(r2_m)
 
     with open(output_csv, 'w') as fcsv:
-        header = "dataset,R2_median,R2_p05,R2_p95,dR2_lwa_only,dR2_sm_only,dR2_interaction,pR2_lwa_only,pR2_sm_only,pR2_interaction\n"
+        header = "dataset,R2_median,R2_p05,R2_p95,dR2_lwa_only,dR2_sm_only,pR2_lwa_only,pR2_sm_only\n"
         fcsv.write(header)
 
         # ERA5
@@ -412,16 +411,14 @@ def run_analysis(LWA_var: str, REGION: str, SEASON: str):
         r2_era_p05    = np.quantile(r2_partial_era["full"], 0.05)
         r2_era_p95    = np.quantile(r2_partial_era["full"], 0.95)
 
-        line = "ERA5,{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
+        line = "ERA5,{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
             r2_era_median,
             r2_era_p05,
             r2_era_p95,
             r2_era_median - np.median(r2_partial_era["lwa_only"]),
             r2_era_median - np.median(r2_partial_era["sm_only"]),
-            r2_era_median - np.median(r2_partial_era["no_int"]),
             np.median(partial_r2(r2_partial_era["full"], r2_partial_era["lwa_only"])),
             np.median(partial_r2(r2_partial_era["full"], r2_partial_era["sm_only"])),
-            np.median(partial_r2(r2_partial_era["full"], r2_partial_era["no_int"])),
         )
 
 
@@ -436,17 +433,15 @@ def run_analysis(LWA_var: str, REGION: str, SEASON: str):
             r2_can_p05    = np.quantile(r2_can_member, 0.05)
             r2_can_p95    = np.quantile(r2_can_member, 0.95)
 
-            line = "{},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
+            line = "{},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
                 'CanESM5_'+emem,
                 r2_can_median,
                 r2_can_p05,
                 r2_can_p95,
                 r2_can_median - np.median(r2_partial_can["lwa_only"][i]),
                 r2_can_median - np.median(r2_partial_can["sm_only"][i]),
-                r2_can_median - np.median(r2_partial_can["no_int"][i]),
                 np.median(partial_r2(r2_partial_can["full"][i], r2_partial_can["lwa_only"][i])),
                 np.median(partial_r2(r2_partial_can["full"][i], r2_partial_can["sm_only"][i])),
-                np.median(partial_r2(r2_partial_can["full"][i], r2_partial_can["no_int"][i])),
             )
 
             fcsv.write(
@@ -499,5 +494,3 @@ if __name__ == "__main__":
     # r2_lwaOnly = bayes_r2_ar1_studentt(idata_lwaOnly)
     # r2_smOnly  = bayes_r2_ar1_studentt(idata_smOnly)
 
-    # pR2_interaction = partial_r2(r2_full, r2_noInt)
-    # dR2_interaction = r2_full - r2_noInt

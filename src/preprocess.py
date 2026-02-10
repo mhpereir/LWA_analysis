@@ -12,7 +12,6 @@ def floor_daily_time(da: xr.DataArray) -> xr.DataArray:
 def drop_leap_day(da: xr.DataArray) -> xr.DataArray:
     return da.sel(time=~((da.time.dt.month == 2) & (da.time.dt.day == 29)))
 
-
 def compute_region_mean(ds: xr.DataArray, region: str) -> xr.DataArray:
     """Compute area-weighted mean over region."""
     lat_slice, lon_slice = config.REGIONS[region]

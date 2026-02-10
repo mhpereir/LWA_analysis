@@ -55,18 +55,18 @@ REGIONS: dict[str, tuple[slice, slice]] = {
 SEASON_NAMES: set[str] = {"ALL", "DJF", "MAM", "JJA", "SON"}
 
 # Root paths (adapt if needed)
-CANESM_LWA_ROOT: str = "/home/mhpereir/data-mhpereir/LWA_calculation/outputs/CanESM5/historical"
-ERA5_LWA_ROOT: str = "/home/mhpereir/data-mhpereir/LWA_calculation/outputs/ERA5"
+CANESM_LWA_ROOT: str   = "/home/mhpereir/data-mhpereir/LWA_calculation/outputs/CanESM5/historical"
+ERA5_LWA_ROOT: str     = "/home/mhpereir/data-mhpereir/LWA_calculation/outputs/ERA5"
 
-ERA5_TAS_ROOT: str = "/home/mhpereir/data-mhpereir/standard_grid_daily/REANALYSIS/ERA5/tas"
-CANESM_TAS_ROOT: str = "/home/mhpereir/data-mhpereir/standard_grid_daily/CMIP6/CanESM5/tas/historical"
+ERA5_TAS_ROOT: str     = "/home/mhpereir/data-mhpereir/standard_grid_daily/REANALYSIS/ERA5/tas"
+CANESM_TAS_ROOT: str   = "/home/mhpereir/data-mhpereir/standard_grid_daily/CMIP6/CanESM5/tas/historical"
 
-ERA5_MRSOS_ROOT: str = "/home/mhpereir/data-mhpereir/standard_grid_daily/REANALYSIS/ERA5/soil_moisture"
+ERA5_MRSOS_ROOT: str   = "/home/mhpereir/data-mhpereir/standard_grid_daily/REANALYSIS/ERA5/soil_moisture"
 CANESM_MRSOS_ROOT: str = "/home/mhpereir/data-mhpereir/standard_grid_daily/CMIP6/CanESM5/mrsos/historical"
 
-LWA_THRESH_ROOT: str = "/home/mhpereir/data-mhpereir/LWA_thresholds/outputs"
+LWA_THRESH_ROOT: str   = "/home/mhpereir/data-mhpereir/LWA_thresholds/outputs"
 
-HW_THRESH_ROOT: str = "/home/mhpereir/data-mhpereir/HW_thresholds/thresholds"
+HW_THRESH_ROOT: str    = "/home/mhpereir/data-mhpereir/HW_thresholds/thresholds"
 
 OUTPUT_PATH: str = "/home/mhpereir/LWA_analysis/results"
 os.makedirs(OUTPUT_PATH, exist_ok=True)
