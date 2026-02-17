@@ -21,6 +21,7 @@ def open_canesm_temperature(var: str, ensemble_list: List[str]) -> xr.DataArray:
         files_by_member,
         combine="nested",
         concat_dim=["member", "time"],
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365},
@@ -42,6 +43,7 @@ def open_era5_temperature(var: str) -> xr.DataArray:
     ds = xr.open_mfdataset(
         files,
         combine="by_coords",
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365},
@@ -71,6 +73,7 @@ def open_canesm_mrsos(var: str, ensemble_list: List[str]) -> xr.DataArray:
         files_by_member,
         combine="nested",
         concat_dim=["member", "time"],
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365},
@@ -92,6 +95,7 @@ def open_era5_mrsos(var: str) -> xr.DataArray:
     ds = xr.open_mfdataset(
         files,
         combine="by_coords",
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365},
@@ -126,6 +130,7 @@ def open_canesm_lwa(ensemble_list: List[str], zg_coord: int) -> Dict[str, xr.Dat
         combine="nested",
         cache=False,
         concat_dim=["member", "time"],
+        data_vars="all",
         parallel=True,
         chunks={"time": 365, "member": 10, "lat": 35, "lon": 180},
         engine="h5netcdf",
@@ -147,6 +152,7 @@ def open_era5_lwa(zg_coord: int) -> Dict[str, xr.DataArray]:
 
     ds = xr.open_mfdataset(
         files,
+        data_vars="all",
         parallel=True,
         cache=False,
         chunks={"time": 3650, "lat": 35, "lon": 180},
@@ -178,6 +184,7 @@ def open_canesm_lwa_thresh(ensemble_list: List[str], q: int, region: str, zg_coo
         files_by_MEMBER,
         combine="nested",
         concat_dim=["member", "time"],   # first stacks MEMBERs, then concatenates their time files
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365}             # tune to your chunking (e.g., ~1 year per chunk)
@@ -226,6 +233,7 @@ def open_canesm_hw_thresh(
         files_by_member,
         combine="nested",
         concat_dim=["member", "time"],
+        data_vars="all",
         parallel=True,
         engine="h5netcdf",
         chunks={"time": 365},

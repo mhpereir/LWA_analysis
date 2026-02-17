@@ -12,7 +12,7 @@ if FAST_IO:
     ENSEMBLE_LIST: list[str] = ["r1i1p1f1", "r2i1p1f1" ]
 
     # Time slice
-    TIME_SLICE: slice = slice("1970-01-01", "1999-12-31")
+    TIME_SLICE: slice = slice("1970-01-01", "1974-12-31")
 
 else:
     # Ensemble members

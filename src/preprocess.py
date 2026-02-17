@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Optional
 import numpy as np
 import xarray as xr
 
@@ -19,6 +19,12 @@ def compute_region_mean(ds: xr.DataArray, region: str) -> xr.DataArray:
 
     weights = np.cos(np.deg2rad(ds_region.lat))
     return ds_region.weighted(weights).mean(dim=["lat", "lon"])
+
+
+def select_season_time(da: xr.DataArray, season: Optional[str]) -> xr.DataArray:
+    if season is None or season == "ALL":
+        return da
+    return da.sel(time=da.time.dt.season == season)
 
 
 def dayofyear_anomaly(da: xr.DataArray) -> xr.DataArray:
